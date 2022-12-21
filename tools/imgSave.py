@@ -1,6 +1,7 @@
 import numpy as np
 from glob import glob
 import os
+import osTool as tos
 from skimage.io import imread
 from skimage.io.collection import alphanumeric_key
 from dask import delayed
@@ -17,7 +18,7 @@ def saveTifSeq(img, pathname, filename, order = 'xyz'):
     else:
         raise Exception('Unsupported axis order currently.')
         
-    mkdirs(pathname)    
+    tos.mkdirs(pathname)    
     for z in range(img.shape[2]):
         im = Image.fromarray(img[:,:,z])
         im.save(pathname + r"\\" + filename +"_{0:06d}.tif".format(z))
@@ -38,18 +39,10 @@ def saveTifSeqRGB(img, pathname, filename = 'Img', order = 'xyzc'):
     else:
         raise Exception('Unsupported axis order currently.')
         
-    mkdirs(pathname)    
+    tos.mkdirs(pathname)    
     for z in range(img.shape[2]):
         tifffile.imsave(pathname + r"\\" + filename +"_{0:06d}.tif".format(z), \
                         np.squeeze(img[:,:,z,:]), 'uint8')
           
         
     return
-   
-def mkdirs(directory):
-    try:
-        os.makedirs(directory)
-        print('Create ', directory)
-    except:
-        print('Exists ', directory)
-                
