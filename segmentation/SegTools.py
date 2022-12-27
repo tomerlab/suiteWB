@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 import sys
 sys.path.append(r'../')
-from tools import osTool as tos
+from tools import ioTools as tio
 
 
 class Block(object):
@@ -93,19 +93,19 @@ class Segmentation(object):
             self.blockMasks = [self.blocks.crop_block(self.masks[i], self.blockId) for i in range(len(self.masks))]
         nMasks = len(self.blockMasks)
         
-        blockMask = np.zeros_like(self.blockMasks[0])
+        labeledMask = np.zeros_like(self.blockMasks[0])
         for i in range(nMasks-1, -1, -1):
-            blockMask[self.blockMasks[i] > 0] =  i + 1
-        blockMask = blockMask.astype('uint8')    
+            labeledMask[self.blockMasks[i] > 0] =  i + 1
+        labeledMask = labeledMask.astype('uint8')    
         
         if not onlyMask:
-            blockMask += 1
+            labeledMask += 1
             nMasks += 1
         
         blockBlobs = np.zeros((0,7))
         for iMask in range(nMasks):
             print('Blob detection (Mask {})...'.format(iMask+1))
-            if onlyMask and ((blockMask == iMask + 1).sum() == 0):
+            if onlyMask and ((labeledMask == iMask + 1).sum() == 0):
                 print('Detection: 0')
                 continue
             
@@ -116,7 +116,7 @@ class Segmentation(object):
                 selectID = []
                 for iBlob, blob in enumerate(blobs):
                     if self.blockProb[blob[0], blob[1], blob[2]] > probThresh and \
-                       blockMask[blob[0], blob[1], blob[2]] == iMask + 1:
+                       labeledMask[blob[0], blob[1], blob[2]] == iMask + 1:
                         selectID += [iBlob]
                 print('Detection: {}'.format(len(selectID)))
                 blobsResult = np.concatenate((blobs[selectID, :], (iMask+1) * np.ones((len(selectID), 1))), axis = 1)
@@ -127,23 +127,22 @@ class Segmentation(object):
         return  pd.DataFrame(blockBlobs, columns = ['x', 'y', 'z', 'rx','ry','rz', 'mask'])
     
     def segmentWhole(self, saveDir, thresholds, onlyMask = True, min_sigma = [2, 2, 1], max_sigma = [4, 4, 4], sigma_ratio = 1.6, \
-                     probThresh = 60):
+                     probThresh = 60, subdir = r'', paramFile = r'param'):
         
         self.checkParam(thresholds, onlyMask)
         
-        try:
-            os.makedirs(saveDir + r"\blocks")
-        except:
-            print('Folders exist')
+        tempLoc = saveDir + subdir + r'\blocks'
+        tio.mkdirs(tempLoc)
 
-        np.save(saveDir + r"\parameters.npy", [thresholds])
+        tio.saveNpy(saveDir + r'\parameters\\' + paramFile + r'.npy', thresholds = thresholds,  min_sigma=min_sigma, max_sigma=max_sigma, \
+                                       sigma_ratio=sigma_ratio, probThresh = probThresh, onlyMask = onlyMask)
         
         self.allBlobs = pd.DataFrame({})
         for bz in range(self.blocks.blockNumber[2]):
             if bz > 0:
-                thresholds = [0.02, 0.1]
+                thresholds = [0.01, 0.04]
             if bz > 1:
-                thresholds = [0.01, 0.15]
+                thresholds = [0.02, 0.2]
 
             for by in range(self.blocks.blockNumber[1]):
                 for bx in range(self.blocks.blockNumber[0]):
@@ -156,7 +155,7 @@ class Segmentation(object):
                         blockBlobs = self.filterBoundaryCells(blockBlobs)
                         blockBlobs = self.mapFullCoord(blockBlobs, bx, by, bz)
                         self.allBlobs = self.allBlobs.append(blockBlobs)
-                    blockBlobs.to_csv(saveDir + r"\blocks\{0:02d}_{1:02d}_{2:02d}.csv".format(bx,by,bz))
+                    blockBlobs.to_csv(tempLoc + r'\{0:02d}_{1:02d}_{2:02d}.csv'.format(bx,by,bz))
 
                         
         return self.allBlobs
@@ -168,7 +167,7 @@ class Segmentation(object):
             for by in range(self.blocks.blockNumber[1]):
                 for bx in range(self.blocks.blockNumber[0]):
                     try:
-                        blockBlobs = pd.read_csv(loadDir + r"\blocks\{0:02d}_{1:02d}_{2:02d}.csv".format(bx,by,bz))
+                        blockBlobs = pd.read_csv(loadDir + r'\{0:02d}_{1:02d}_{2:02d}.csv'.format(bx,by,bz))
                         self.allBlobs = self.allBlobs.append(blockBlobs)
                     except:
                         pass
