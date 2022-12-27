@@ -3,6 +3,9 @@ import skimage.feature as skfeature
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
+from glob import glob
+import napari
+
 
 import sys
 sys.path.append(r'../')
@@ -193,3 +196,44 @@ class Segmentation(object):
         nMasks = len(self.masks) + 1 - int(onlyMask)
         nThresholds = len(thresholds)
         assert nThresholds == nMasks, f"Masks number ({nMasks}) unequal to thresholds number ({nThresholds})"
+        
+        
+class Proofread(object):
+    def __init__(self, basedir, img, tempFolder = r'\proofreadTemp'):
+        self.basedir = basedir
+        self.tempFolder = tempFolder
+        self.cells = self.loadResults()
+        self.img = img
+        
+    def loadResults(self):
+        assert len(glob(self.basedir + r'\results.csv')) > 0, f'Please generate results first'
+
+        existingResults = glob(self.basedir + self.tempFolder + r'\manualResults*.csv')
+            
+        if len(existingResults) > 0:
+            self.latestID = 0
+            for i in range(len(existingResults)):
+                self.latestID = np.max((self.latestID, int(re.search('manualResults(.+?).csv', existingResults[i]).group(1))))
+            cells = pd.read_csv(self.basedir + self.tempFolder + r'\manualResults{0:03}.csv'.format(self.latestID))
+        else:
+            cells = pd.read_csv(self.basedir + r'\results.csv')
+            
+        return cells
+
+    def viewResults(self):
+
+        self.viewer = napari.view_image(self.img, contrast_limits=[0,10000], colormap = 'gray',  scale = [2,1,1], name = 'Img')
+
+        self.viewer.add_points(np.array([self.cells.z, self.cells.x, self.cells.y]).T, size = 6, scale = [2,1,1], 
+                          n_dimensional = True, face_color = 'red', name = 'Cells')
+        
+    def updateResults(self):
+        self.cells = pd.DataFrame(self.viewer.layers[1].data, columns = ['z', 'x','y'])
+        
+        tio.mkdirs(self.basedir + self.tempFolder )
+        
+        self.latestID += 1
+        self.cells.to_csv(self.basedir + self.tempFolder + r'manualResults{0:03}.csv'.format(self.latestID))
+        
+#     def autoBackupThread(self):
+#         while(1)
