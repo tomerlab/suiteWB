@@ -5,7 +5,7 @@ import os
 import matplotlib.pyplot as plt
 from glob import glob
 import napari
-
+import re
 
 import sys
 sys.path.append(r'../')
@@ -25,6 +25,7 @@ class Blocks(object):
 
         self.blockNumber = np.ceil((self.imgShape - self.blockOverlap)  \
                                    /(self.blockShape - self.blockOverlap)).astype('uint16')
+        self.blockNumber[self.blockNumber == 0] = 1
         print('Block Number (x,y,z): ', self.blockNumber)
         
         self.blocks = [[[None for _ in range(self.blockNumber[2])] \
@@ -102,13 +103,13 @@ class Segmentation(object):
         labeledMask = labeledMask.astype('uint8')    
         
         if not onlyMask:
-            labeledMask += 1
+            labeledMask[labeledMask == 0] = nMasks + 1
             nMasks += 1
         
         blockBlobs = np.zeros((0,7))
         for iMask in range(nMasks):
             print('Blob detection (Mask {})...'.format(iMask+1))
-            if onlyMask and ((labeledMask == iMask + 1).sum() == 0):
+            if (labeledMask == iMask + 1).sum() == 0:
                 print('Detection: 0')
                 continue
             
@@ -125,6 +126,7 @@ class Segmentation(object):
                 blobsResult = np.concatenate((blobs[selectID, :], (iMask+1) * np.ones((len(selectID), 1))), axis = 1)
             else:
                 blobsResult = np.zeros((0,7))
+                print('Detection: 0')
             blockBlobs = np.concatenate((blockBlobs, blobsResult), axis = 0)
         
         return  pd.DataFrame(blockBlobs, columns = ['x', 'y', 'z', 'rx','ry','rz', 'mask'])
@@ -142,20 +144,17 @@ class Segmentation(object):
         
         self.allBlobs = pd.DataFrame({})
         for bz in range(self.blocks.blockNumber[2]):
-            if bz > 0:
-                thresholds = [0.01, 0.04]
-            if bz > 1:
-                thresholds = [0.02, 0.2]
 
             for by in range(self.blocks.blockNumber[1]):
                 for bx in range(self.blocks.blockNumber[0]):
                     print('\n===')
                     print('Block: ', bx, by, bz)
                     
-                    blockBlobs = self.segmentBlock([bx, by, bz], thresholds, onlyMask)
+                    blockBlobs = self.segmentBlock([bx, by, bz], thresholds, onlyMask,  min_sigma=min_sigma, max_sigma=max_sigma, \
+                                                   sigma_ratio=sigma_ratio, probThresh = probThresh)
                     
                     if len(blockBlobs) > 0:
-                        blockBlobs = self.filterBoundaryCells(blockBlobs)
+                        blockBlobs = self.filterBoundaryCells(blockBlobs, bx, by, bz)
                         blockBlobs = self.mapFullCoord(blockBlobs, bx, by, bz)
                         self.allBlobs = self.allBlobs.append(blockBlobs)
                     blockBlobs.to_csv(tempLoc + r'\{0:02d}_{1:02d}_{2:02d}.csv'.format(bx,by,bz))
@@ -176,12 +175,28 @@ class Segmentation(object):
                         pass
         return self.allBlobs
                         
-    def filterBoundaryCells(self, blobs):
+    def filterBoundaryCells(self, blobs, bx, by, bz):
         blockOverlap = self.blocks.blockOverlap
         blockShape = self.blocks.blockShape
-        selectId = (blobs.x >= blockOverlap[0]/2) & (blobs.x < blockShape[0] - blockOverlap[0]/2) & \
-            (blobs.y >= blockOverlap[1]/2) & (blobs.y < blockShape[1] - blockOverlap[1]/2) & \
-            (blobs.z >= blockOverlap[2]/2) & (blobs.z < blockShape[2] - blockOverlap[2]/2)
+        blockNumber = self.blocks.blockNumber
+        
+        selectId = np.ones_like(blobs.x) > 0
+        
+        if bx > 0:
+            selectId &= (blobs.x >= blockOverlap[0]/2)
+        if bx < self.blocks.blockNumber[0] - 1:
+            selectId &= (blobs.x < blockShape[0] - blockOverlap[0]/2)
+        if by > 0:
+            selectId &= (blobs.y >= blockOverlap[1]/2)
+        if by < self.blocks.blockNumber[1] - 1:
+            selectId &= (blobs.y < blockShape[1] - blockOverlap[1]/2)
+        if bz > 0:
+            selectId &= (blobs.z >= blockOverlap[2]/2)
+        if bz < self.blocks.blockNumber[2] - 1:
+            selectId &= (blobs.z < blockShape[2] - blockOverlap[2]/2)
+#         selectId = (blobs.x >= blockOverlap[0]/2) & (blobs.x < blockShape[0] - blockOverlap[0]/2) & \
+#             (blobs.y >= blockOverlap[1]/2) & (blobs.y < blockShape[1] - blockOverlap[1]/2) & \
+#             (blobs.z >= blockOverlap[2]/2) & (blobs.z < blockShape[2] - blockOverlap[2]/2)
 
         return blobs[selectId]
     
@@ -209,9 +224,9 @@ class Proofread(object):
         assert len(glob(self.basedir + r'\results.csv')) > 0, f'Please generate results first'
 
         existingResults = glob(self.basedir + self.tempFolder + r'\manualResults*.csv')
-            
+        
+        self.latestID = -1    
         if len(existingResults) > 0:
-            self.latestID = 0
             for i in range(len(existingResults)):
                 self.latestID = np.max((self.latestID, int(re.search('manualResults(.+?).csv', existingResults[i]).group(1))))
             cells = pd.read_csv(self.basedir + self.tempFolder + r'\manualResults{0:03}.csv'.format(self.latestID))
@@ -220,20 +235,27 @@ class Proofread(object):
             
         return cells
 
-    def viewResults(self):
-
-        self.viewer = napari.view_image(self.img, contrast_limits=[0,10000], colormap = 'gray',  scale = [2,1,1], name = 'Img')
-
-        self.viewer.add_points(np.array([self.cells.z, self.cells.x, self.cells.y]).T, size = 6, scale = [2,1,1], 
-                          n_dimensional = True, face_color = 'red', name = 'Cells')
+    def viewResults(self, contrast_limits=[0,10000], blobSize = 6, blobColor = 'red'):
+        attempts = 0
+        while attempts < 2:
+            try:
+                self.viewer = napari.view_image(self.img, contrast_limits=contrast_limits, \
+                                                colormap = 'gray',  scale = [2,1,1], name = 'Img')
+                self.viewer.add_points(np.array([self.cells.z, self.cells.x, self.cells.y]).T, size = blobSize, scale = [2,1,1], 
+                                  n_dimensional = True, face_color = blobColor, name = 'Cells')
+                break
+            except:
+                attempts += 1
+        else:
+            print('Napari failed. Try re-run.')
         
     def updateResults(self):
         self.cells = pd.DataFrame(self.viewer.layers[1].data, columns = ['z', 'x','y'])
-        
+        print('Cells: {}'.format(len(self.cells)))
         tio.mkdirs(self.basedir + self.tempFolder )
         
         self.latestID += 1
-        self.cells.to_csv(self.basedir + self.tempFolder + r'manualResults{0:03}.csv'.format(self.latestID))
+        self.cells.to_csv(self.basedir + self.tempFolder + r'\manualResults{0:03}.csv'.format(self.latestID))
         
 #     def autoBackupThread(self):
 #         while(1)
