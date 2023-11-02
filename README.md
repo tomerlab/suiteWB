@@ -3,7 +3,7 @@
 
 # Pipeline
 ## Registration
-Create your own downsampled whole brain nrrd file with resolution 10x10x10 $\mu m$. Register the brain onto the reference atlas. Then with the parameters, apply the transformation onto your high resolution brain nrrd image. 
+Create downsampled whole brain nrrd file with resolution 10x10x10 $\mu m$. Register the brain volumes onto the average reference atlas. These transformation parameters are applied to the high resolution brain nrrd image. 
 
 ## Segmentation
 ### cropRegions.ipynb
